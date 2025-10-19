@@ -114,7 +114,7 @@ class tcp_client(object):
         try:
             resp = self._connect.recv(1024)
             resp_json = json.loads(resp.strip())            
-        except:
+        except Exception:
             _LOGGER.info('_device_info.recv.error')
             return None
         
@@ -144,7 +144,12 @@ class tcp_client(object):
                     match = True
                     self._icon = item1['i']
                     self._device_model_name = item1['n']
-                    self._dpid = item1['dpid']
+                    # Normalize dpid list to strings so the rest of the integration can compare consistently
+                    try:
+                        raw_dpid = item1.get('dpid', [])
+                        self._dpid = [str(x) for x in raw_dpid] if isinstance(raw_dpid, list) else []
+                    except Exception:
+                        self._dpid = []
                     break
             
             if match:
@@ -206,7 +211,13 @@ class tcp_client(object):
         :param payload:
         :return:
         """
-        self._connect.send(self._get_package(cmd, payload))
+        try:
+            self._connect.send(self._get_package(cmd, payload))
+        except Exception as e:
+            _LOGGER.exception(f'_send_receiver.send.error: {e}')
+            self._reconnect()
+            return {}
+
         try:
             i = 10
             while i > 0:
@@ -225,7 +236,11 @@ class tcp_client(object):
                     if payload['msg'].get('data') is None or type(payload['msg']['data']) is not dict:
                         return {}
 
-                    return payload['msg']['data']
+                    # ensure keys are strings (device may send numeric keys)
+                    data = {}
+                    for k, v in payload['msg']['data'].items():
+                        data[str(k)] = v
+                    return data
 
             return {}
 
@@ -241,7 +256,11 @@ class tcp_client(object):
         :param payload:
         :return:
         """
-        self._connect.send(self._get_package(cmd, payload))
+        try:
+            self._connect.send(self._get_package(cmd, payload))
+        except Exception as e:
+            _LOGGER.exception(f'_only_send.send.error: {e}')
+            self._reconnect()
     
     def control(self, payload: dict) -> bool:
         """
