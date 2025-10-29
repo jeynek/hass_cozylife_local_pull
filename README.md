@@ -1,6 +1,6 @@
 # hass_cozylife_local_pull — CozyLife Local Control for Home Assistant (fork)
 
-A fork of the original hass_cozylife_local_pull integration with fixes and added support for temperature and humidity sensors. This fork focuses on stability, modern Home Assistant APIs, and better local reliability.
+An AI Slop fork of the original hass_cozylife_local_pull integration with fixes and added support for temperature and humidity sensors. This fork focuses on stability, modern Home Assistant APIs, and better local reliability.
 
 NOTE: This is a custom integration for Home Assistant. It is installed into the `custom_components` folder and is not part of core Home Assistant.
 
