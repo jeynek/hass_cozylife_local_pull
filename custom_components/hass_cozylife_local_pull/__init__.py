@@ -1,55 +1,54 @@
-"""Example Load Platform integration."""
-from __future__ import annotations
-
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.discovery import async_load_platform
-from homeassistant.helpers.typing import ConfigType
 import logging
-import time
-from .const import (
-    DOMAIN,
-    LANG
-)
-from .utils import get_pid_list
-from .udp_discover import get_ip
-from .tcp_client import tcp_client
 
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import discovery_flow
+
+from .const import DOMAIN, CONF_IP_ADDRESS, CONF_LANG
+from .coordinator import CozyLifeCoordinator
+from .discovery import async_discover_ips
 
 _LOGGER = logging.getLogger(__name__)
 
+PLATFORMS = [Platform.LIGHT, Platform.SWITCH, Platform.SENSOR]
 
-def setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    
-    """
-    TODO:timer discover
-    config:{'lang': 'zh', 'ip': ['192.168.5.201', '192.168.5.202', '192.168.5.1']}
-}
-    """
-    ip = get_ip()
-    ip_from_config = config[DOMAIN].get('ip') if config[DOMAIN].get('ip') is not None else []    
-    ip += ip_from_config
-    ip_list = []
-    [ip_list.append(i) for i in ip if i not in ip_list]
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    hass.data.setdefault(DOMAIN, {})
 
-    if 0 == len(ip_list):
-        _LOGGER.info('discover nothing')
-        return True
+    async def _discover():
+        ips = await async_discover_ips()
+        for ip in ips:
+            discovery_flow.async_create_flow(
+                hass, DOMAIN,
+                context={"source": config_entries.SOURCE_DISCOVERY},
+                data={CONF_IP_ADDRESS: ip, CONF_LANG: "en"},
+            )
 
-    _LOGGER.info('try conncet ip_list:', ip_list)
-    lang_from_config = (config[DOMAIN].get('lang') if config[DOMAIN].get('lang') is not None else LANG)
-    get_pid_list(lang_from_config)
-
-    hass.data[DOMAIN] = {
-        'temperature': 24,
-        'ip': ip_list,
-        'tcp_client': [tcp_client(item) for item in ip_list],
-    }
-
-    #wait for get device info from tcp conncetion
-    #but it is bad
-    time.sleep(3)
-    # _LOGGER.info('setup', hass, config)
-    # hass.helpers.discovery.load_platform('sensor', DOMAIN, {}, config)
-    hass.loop.call_soon_threadsafe(hass.async_create_task, async_load_platform(hass, 'light', DOMAIN, {}, config))
-    hass.loop.call_soon_threadsafe(hass.async_create_task, async_load_platform(hass, 'switch', DOMAIN, {}, config))
+    hass.async_create_task(_discover())
     return True
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    ip = entry.data[CONF_IP_ADDRESS]
+    lang = entry.data.get(CONF_LANG, "en")
+
+    coordinator = CozyLifeCoordinator(hass, ip, lang)
+    hass.data[DOMAIN][entry.entry_id] = coordinator
+
+    try:
+        await coordinator.async_fetch_device_info()
+        await coordinator.async_config_entry_first_refresh()
+    except Exception as err:
+        raise ConfigEntryNotReady(f"Setup error for {ip}: {err}")
+
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    return True
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    if await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        coordinator = hass.data[DOMAIN].pop(entry.entry_id)
+        await coordinator.async_close()
+        return True
+    return False
