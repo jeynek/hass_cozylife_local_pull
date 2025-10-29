@@ -1,5 +1,6 @@
-# CozyLife Local Control for Home Assistant (Fixed & Optimized)
+# AI Slop (GitHub CoPilot) fork of CozyLife Local Control for Home Assistant (Fixed & Optimized)
 
+This fork tries to add humidity and temperature sensor.
 This is a modified version (fork) of the original, official `hass_cozylife_local_pull` integration created by the CozyLife Team. The original version appears to be in an early development stage and contains critical bugs that make it largely non-functional in modern Home Assistant installations.
 
 This fork has been completely repaired, modernized, and optimized for maximum reliability and speed on a local network.
