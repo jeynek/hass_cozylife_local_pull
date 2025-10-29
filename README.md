@@ -1,109 +1,94 @@
-# AI Slop (GitHub CoPilot) fork of CozyLife Local Control for Home Assistant (Fixed & Optimized)
+# hass_cozylife_local_pull — CozyLife Local Control for Home Assistant (fork)
 
-This fork tries to add humidity and temperature sensor.
-This is a modified version (fork) of the original, official `hass_cozylife_local_pull` integration created by the CozyLife Team. The original version appears to be in an early development stage and contains critical bugs that make it largely non-functional in modern Home Assistant installations.
+A fork of the original hass_cozylife_local_pull integration with fixes and added support for temperature and humidity sensors. This fork focuses on stability, modern Home Assistant APIs, and better local reliability.
 
-This fork has been completely repaired, modernized, and optimized for maximum reliability and speed on a local network.
+NOTE: This is a custom integration for Home Assistant. It is installed into the `custom_components` folder and is not part of core Home Assistant.
 
-**Status as of September 25, 2025: This forked version is verified and fully functional.**
+Status (2025-10-29)
+- Tested against local CozyLife bulbs and temperature/humidity-capable devices.
+- Sensors (temperature, humidity, battery) implemented using known DPIDs.
+- Works as a manual custom component; a future HACS release may be possible.
 
-## Key Fixes & Improvements Over the Original
+Features / Improvements in this fork
+- Fixed protocol handling issues present in earlier versions.
+- Added temperature and humidity sensors (DPIDs commonly used by CozyLife temperature sensors).
+- Modernized async code and added config-entry support for platform setup.
+- Device grouping via device_info so entities appear under a single device in Home Assistant.
+- Dynamic sensor creation via dispatcher signal when tcp_client objects are created after startup.
+- Basic safeguards and logging improvements.
 
-* **Protocol & Color Control Fixes:** The original code misinterpreted the device communication protocol. The key fix addresses the control parameter (DPID `'2'`), which is **not** for switching between color/white modes, but for activating special effects. The new code now correctly uses `'2': 0` for all standard operations, which fully enables changing colors and color temperature.
-* **Stability & Reliability:** Fixed bugs that caused the light bulb to become unavailable or crash when changing colors or sending other commands.
-* **Code Modernization:** The codebase has been rewritten using modern `async` standards and updated to be compliant with recent Home Assistant versions. All deprecated functions and constants have been replaced, including the switch from Mireds to Kelvin for color temperature.
-* **User Interface (UI) Bug Fixes:** Resolved visual glitches in the Home Assistant frontend, such as the brightness slider rendering with the wrong color after switching modes.
-* **High-Performance by Default (Optimistic Mode):** The integration has been completely rewritten to be "optimistic" and **does not use polling** to check the bulb's status. It sends commands as quickly as possible and immediately assumes they were successful. This makes it extremely fast and ideal for high-frequency use cases like Ambilight (HyperHDR), while also reducing network traffic. The trade-off is that Home Assistant will not detect state changes made from outside (e.g., using the CozyLife app).
+Supported device types
+- RGBCW Light
+- CW Light
+- Switch & Plug
+- Temperature / Humidity sensors (devices exposing DPIDs for temp/humidity/battery)
 
-## Tested Hardware
-This integration was successfully tested and debugged with the following affordable Wi-Fi RGB bulbs from Temu:
-* [Product Link on Temu.com](https://www.temu.com/goods.html?_bg_fs=1&goods_id=601102518752308&sku_id=17605095486273)
+Tested Hardware
+- Affordable Wi‑Fi RGB bulbs and CozyLife temperature/humidity sensors (results may vary by model and firmware)
 
-## Setup Guide (Step-by-Step)
+Installation
 
-### 1. First-Time Pairing in the CozyLife App
-Before using Home Assistant, you must first pair the bulbs with your Wi-Fi network using the official mobile app.
-* Install the **CozyLife Smart** app: [Link for iOS](https://apps.apple.com/cz/app/cozylife-smart/id1548663863?l=cs) (a similar app is available for Android).
-* Create an account and follow the in-app instructions to add and connect your bulbs to your **2.4 GHz Wi-Fi network**.
-* Name your bulbs in the app for easy identification.
+HACS
+- Not currently published to HACS (this fork). If/when published, prefer HACS installation.
 
-### 2. Network Configuration (IMPORTANT)
-For reliable local control, each bulb must have a fixed IP address.
-* Log in to your Wi-Fi router's administration page.
-* Find the list of connected devices and identify the IP address of your new bulb (e.g., by its name or MAC address).
-* In your router's DHCP server settings, set up a **static IP reservation** for the bulb's MAC address. This ensures the bulb will always have the same IP address and never be assigned a different one.
-* Repeat this step for all bulbs you wish to integrate. Make a note of their static IP addresses.
+Manual (recommended for testing)
+1. Copy the `hass_cozylife_local_pull` folder into your Home Assistant `custom_components/` directory:
+   /config/custom_components/hass_cozylife_local_pull/
 
-### 3. Installation in Home Assistant
-* Clone or download this repository.
-* Copy the entire `hass_cozylife_local_pull` folder into the `custom_components` directory of your Home Assistant installation. The final path should look like: `/config/custom_components/hass_cozylife_local_pull/`.
+2. Restart Home Assistant.
 
-### 4. Configuration in `configuration.yaml`
-Open your main `configuration.yaml` file and add the following, listing the static IP addresses of your bulbs:
+Configuration
+
+YAML (legacy)
+Add basic configuration to `configuration.yaml` (only if the integration expects YAML — check integration manifest and __init__.py for config entry support):
 ```yaml
 hass_cozylife_local_pull:
   lang: en
   ip:
-    - "192.168.1.101" # IP Address of your first bulb
-    - "192.168.1.102" # IP Address of your second bulb
+    - "192.168.1.101"
+    - "192.168.1.102"
 ```
 
-### 5. Restart Home Assistant
-Save your changes and restart the entire Home Assistant instance to load the new custom component. Your bulbs should now appear as new entities.
+Config entries
+- This fork includes support for platform setup via `async_setup_entry`. If your integration exposes a config flow or programmatic config entry creation, prefer that over YAML.
+- Entities (sensors, lights, etc.) will be created when tcp_client objects are registered in `hass.data[DOMAIN]["tcp_client"]`. If tcp_client objects are created after startup, the integration will dispatch a signal so platforms can add entities dynamically.
 
-## Troubleshoot
-* **Device is Unavailable:** This is most often caused by Wi-Fi signal issues. These bulbs have weak antennas. Ensure a strong 2.4 GHz Wi-Fi signal at the bulb's location. Consider setting up a dedicated 2.4 GHz SSID for your IoT devices to prevent issues with band steering on your router.
-* **Check `configuration.yaml`:** Ensure the IP addresses are correct and you have a static IP reservation for each bulb.
-* **Check Path:** Ensure the integration is in the correct folder: `custom_components/hass_cozylife_local_pull/`.
-* **Router Settings:** Check if "Client Isolation" or "AP Isolation" is enabled on your router's main Wi-Fi network and disable it.
+Dynamic client / sensor creation (for integrators)
+- When the integration creates a new tcp_client at runtime, dispatch:
+```py
+from homeassistant.helpers.dispatcher import async_dispatcher_send
+from custom_components.hass_cozylife_local_pull.sensor import SIGNAL_NEW_TCP_CLIENT
 
----
-*The original project README is preserved below for historical context.*
+async_dispatcher_send(hass, SIGNAL_NEW_TCP_CLIENT, new_tcp_client)
+```
+That will instruct the sensor platform to create sensor entities for the new client.
+
+Sensors and DPIDs (info)
+- Temperature — DPID "8" — value reported as temperature * 10 (e.g., 235 -> 23.5 °C)
+- Humidity — DPID "4" — value reported as percentage (0..100) or occasionally scaled by 10
+- Battery — DPID "9" — reported as battery * 10 (e.g., 800 -> 80%)
+
+Notes & recommendations
+- The integration exposes synchronous tcp_client.query() calls wrapped in an executor. If your tcp_client provides async methods, converting to native async can reduce thread usage.
+- Consider switching to a DataUpdateCoordinator if multiple entities poll the same device; this avoids parallel queries and centralizes error handling and throttling.
+- Ensure your devices use static IPs or DHCP reservations for reliability, as described originally.
+
+Troubleshooting
+- Device unavailable: check Wi‑Fi connectivity and router client isolation settings.
+- Entities not created: verify that `hass.data[DOMAIN]["tcp_client"]` contains clients before platform setup, or that the integration dispatches SIGNAL_NEW_TCP_CLIENT when clients are created later.
+- Check Home Assistant logs (Supervisor / Core logs) for integration-specific errors.
+
+Development notes for maintainers
+- Keep manifest.json up-to-date with minimum Home Assistant version and requirements.
+- Implement `async_unload_entry` in __init__.py to clean up dispatcher listeners stored in hass.data[DOMAIN].
+- Provide tests for sensor value conversion, entity creation paths (hass.data vs dispatcher), and query error handling.
+
+License & attribution
+- This repository is a fork. Keep license and attribution consistent with the original project as appropriate.
+- See the original README preserved below for historical context.
+
+Original README (preserved)
 <details>
   <summary>Show Original README</summary>
-  
-  # CozyLife & Home Assistant 
-  
-  CozyLife Assistant integration is developed for controlling CozyLife devices using local net, officially 
-  maintained by the CozyLife Team.
-  
-  
-  ## Supported Device Types
-  
-  - RGBCW Light
-  - CW Light
-  - Switch & Plug
-  
-  
-  ## Install
-  
-  * A home assistant environment that can access the external network
-  * clone the repo to the custom_components directory
-  * configuration.yaml
-  ```
-  hass_cozylife_local_pull:
-   lang: en
-   ip:
-     - "192.168.1.99"
-  ```
-  
-  
-  ### Feedback
-  * Please submit an issue
-  * Send an email with the subject of hass support to info@cozylife.app
-  
-  ### Troubleshoot 
-  * Check whether the internal network isolation of the router is enabled
-  * Check if the plugin is in the right place
-  * Restart HASS multiple times
-  * View the output log of the plugin
-  * It is currently the first version of the plugin, there may be problems that cannot be found
-  
-  
-  ### TODO
-  - Sending broadcasts regularly has reached the ability to discover devices at any time
-  - Support sensor device
-  
-  ### PROGRESS
-  - None
+  (Original README preserved in this repository)
 </details>
