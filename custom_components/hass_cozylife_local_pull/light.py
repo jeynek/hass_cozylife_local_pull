@@ -1,131 +1,108 @@
-"""
-Platform for light integration for CozyLife.
-Optimized version for high-frequency updates (e.g., HyperHDR).
-Polling is disabled in favor of optimistic updates.
-"""
-from __future__ import annotations
+from homeassistant.components.light import ColorMode, LightEntity, LightEntityFeature
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity_platform import async_get_current_platform
 
-import logging
-from typing import Any
+from .const import DOMAIN, LIGHT_TYPE_CODE, SWITCH, WORK_MODE, COLOR_TEMP, BRIGHT, HUE, SAT
+from .coordinator import CozyLifeCoordinator
 
-from homeassistant.components.light import (
-    ATTR_BRIGHTNESS,
-    ATTR_COLOR_TEMP_KELVIN,
-    ATTR_HS_COLOR,
-    ColorMode,
-    LightEntity,
-)
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+HUE_SCALE = 65535 / 360
+SAT_SCALE = 65535 / 1000  # To 0-1000, then /10 for HA 0-100
+BRIGHT_SCALE = 1000 / 255
+COLOR_TEMP_MIN = 2000
+COLOR_TEMP_MAX = 6500
 
-from .const import DOMAIN, LIGHT_TYPE_CODE
-from .tcp_client import tcp_client
-
-_LOGGER = logging.getLogger(__name__)
-
-async def async_setup_platform(
-    hass: HomeAssistant,
-    config: ConfigType,
-    async_add_entities: AddEntitiesCallback,
-    discovery_info: DiscoveryInfoType | None = None,
-) -> None:
-    """Set up the CozyLife light platform."""
-    if discovery_info is None:
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities) -> None:
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    if coordinator.device_type_code != LIGHT_TYPE_CODE:
         return
 
-    lights = []
-    if DOMAIN in hass.data and 'tcp_client' in hass.data[DOMAIN]:
-        for item in hass.data[DOMAIN]['tcp_client']:
-            if LIGHT_TYPE_CODE == item.device_type_code:
-                lights.append(CozyLifeLightOptimized(item))
-    
-    if lights:
-        async_add_entities(lights)
+    async_add_entities([CozyLifeLight(coordinator)])
 
-class CozyLifeLightOptimized(LightEntity):
-    """Optimized representation of a CozyLife Light for high-frequency control."""
-    # --- OPTIMALIZACE: Vypnutí pravidelného dotazování (polling) ---
+class CozyLifeLight(LightEntity):
+    _attr_supported_features = LightEntityFeature.TRANSITION | LightEntityFeature.EFFECT
     _attr_should_poll = False
-    
-    _attr_min_color_temp_kelvin = 2000
-    _attr_max_color_temp_kelvin = 6500
+    _attr_min_color_temp_kelvin = COLOR_TEMP_MIN
+    _attr_max_color_temp_kelvin = COLOR_TEMP_MAX
 
-    def __init__(self, tcp_client_instance: tcp_client) -> None:
-        """Initialize the light."""
-        self._tcp_client = tcp_client_instance
-        self._attr_unique_id = self._tcp_client.device_id
-        self._attr_name = f"{self._tcp_client.device_model_name} {self._tcp_client.device_id[-4:]}"
+    def __init__(self, coordinator: CozyLifeCoordinator) -> None:
+        self._attr_unique_id = f"{coordinator.ip}_light"
+        self._attr_name = coordinator.device_model_name or "Light"
+        self._attr_device_info = coordinator.device_info
+        self.coordinator = coordinator
         self._attr_supported_color_modes = set()
-        dpid = self._tcp_client.dpid
-
-        if 5 in dpid and 6 in dpid:
+        dpid = set(coordinator.dpid)
+        if HUE in dpid and SAT in dpid:
             self._attr_supported_color_modes.add(ColorMode.HS)
-        if 3 in dpid:
+        if COLOR_TEMP in dpid:
             self._attr_supported_color_modes.add(ColorMode.COLOR_TEMP)
-        if 4 in dpid and not self._attr_supported_color_modes:
+        if BRIGHT in dpid and not self._attr_supported_color_modes:
             self._attr_supported_color_modes.add(ColorMode.BRIGHTNESS)
         if not self._attr_supported_color_modes:
             self._attr_supported_color_modes.add(ColorMode.ONOFF)
 
-        # Předpokládáme, že žárovka je na začátku zapnutá v režimu bílé
-        self._attr_is_on = True
-        self._attr_brightness = 255
-        self._attr_hs_color = None
-        self._attr_color_temp_kelvin = 3500
-        self._attr_color_mode = ColorMode.COLOR_TEMP
-        self._attr_available = True
+        self._state = False
+        self._brightness = 255
+        self._hs_color = (0, 0)
+        self._color_temp_kelvin = 3500
+        self._color_mode = ColorMode.UNKNOWN
 
-    # Metoda async_update je záměrně odstraněna, protože polling je vypnutý.
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        """Instruct the light to turn on with optimistic updates."""
-        payload = {'1': 255, '2': 0}
-        
-        target_brightness_ha = kwargs.get(ATTR_BRIGHTNESS, self._attr_brightness)
-        target_hs_color = kwargs.get(ATTR_HS_COLOR, self._attr_hs_color)
-        target_color_temp_kelvin = kwargs.get(ATTR_COLOR_TEMP_KELVIN, self._attr_color_temp_kelvin)
-        
-        active_mode = self._attr_color_mode
-        if ATTR_HS_COLOR in kwargs:
-            active_mode = ColorMode.HS
-        elif ATTR_COLOR_TEMP_KELVIN in kwargs:
-            active_mode = ColorMode.COLOR_TEMP
-
-        if target_brightness_ha is not None:
-            payload['4'] = round(target_brightness_ha * 1000 / 255)
-
-        if active_mode == ColorMode.HS and target_hs_color:
-            payload['5'] = int(target_hs_color[0])
-            payload['6'] = int(target_hs_color[1] * 10)
-        elif active_mode == ColorMode.COLOR_TEMP and target_color_temp_kelvin:
-            if target_color_temp_kelvin is None:
-                target_color_temp_kelvin = 3500
-            kelvin_range = self._attr_max_color_temp_kelvin - self._attr_min_color_temp_kelvin
-            normalized_val = (target_color_temp_kelvin - self._attr_min_color_temp_kelvin) / kelvin_range
-            payload['3'] = round(max(0, min(1000, normalized_val * 1000)))
-        
-        # Odeslání příkazu bez čekání na odpověď
-        await self.hass.async_add_executor_job(self._tcp_client.control, payload)
-        
-        # Okamžitá ("optimistická") aktualizace stavu v Home Assistant
-        self._attr_is_on = True
-        if target_brightness_ha is not None:
-            self._attr_brightness = target_brightness_ha
-
-        if active_mode == ColorMode.HS and target_hs_color:
-            self._attr_color_mode = ColorMode.HS
-            self._attr_hs_color = target_hs_color
-            self._attr_color_temp_kelvin = None
-        elif active_mode == ColorMode.COLOR_TEMP and target_color_temp_kelvin:
-            self._attr_color_mode = ColorMode.COLOR_TEMP
-            self._attr_color_temp_kelvin = target_color_temp_kelvin
-            self._attr_hs_color = None
-            
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        data = self.coordinator.data
+        self._state = bool(data.get(SWITCH, 0))
+        bright = data.get(BRIGHT, 1000)
+        self._brightness = int(bright / BRIGHT_SCALE) if bright else None
+        work_mode = data.get(WORK_MODE, 0)
+        if work_mode == 1:  # Color mode
+            self._color_mode = ColorMode.HS
+            hue_raw = data.get(HUE, 0)
+            sat_raw = data.get(SAT, 0)
+            self._hs_color = (hue_raw / HUE_SCALE, (sat_raw / SAT_SCALE) / 10)  # sat 0-1000 to 0-100
+            self._color_temp_kelvin = None
+        else:  # White mode
+            self._color_mode = ColorMode.COLOR_TEMP
+            ct_raw = data.get(COLOR_TEMP, 500)
+            ct_norm = ct_raw / 1000
+            self._color_temp_kelvin = int(COLOR_TEMP_MIN + ct_norm * (COLOR_TEMP_MAX - COLOR_TEMP_MIN))
+            self._hs_color = None
         self.async_write_ha_state()
 
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Instruct the light to turn off."""
-        await self.hass.async_add_executor_job(self._tcp_client.control, {'1': 0})
-        self._attr_is_on = False
-        self.async_write_ha_state()
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(self.coordinator.async_add_listener(self._handle_coordinator_update))
+
+    async def async_turn_on(self, **kwargs) -> None:
+        commands = {SWITCH: 255}
+        if 'brightness' in kwargs:
+            commands[BRIGHT] = int(kwargs['brightness'] * BRIGHT_SCALE)
+        if 'hs_color' in kwargs:
+            hs = kwargs['hs_color']
+            commands[WORK_MODE] = 1
+            commands[HUE] = int(hs[0] * HUE_SCALE)
+            commands[SAT] = int(hs[1] * 10 * (65535 / 1000))  # 0-100 to 0-1000 to 0-65535
+        if 'color_temp_kelvin' in kwargs:
+            commands[WORK_MODE] = 0
+            ct_norm = (kwargs['color_temp_kelvin'] - COLOR_TEMP_MIN) / (COLOR_TEMP_MAX - COLOR_TEMP_MIN)
+            commands[COLOR_TEMP] = int(ct_norm * 1000)
+        await self.coordinator.client.async_control(commands)
+        await self.coordinator.async_request_refresh()  # Poll to confirm, but optimistic possible
+
+    async def async_turn_off(self, **kwargs) -> None:
+        await self.coordinator.client.async_control({SWITCH: 0})
+        await self.coordinator.async_request_refresh()
+
+    @property
+    def is_on(self) -> bool:
+        return self._state
+
+    @property
+    def brightness(self) -> int | None:
+        return self._brightness
+
+    @property
+    def hs_color(self) -> tuple | None:
+        return self._hs_color
+
+    @property
+    def color_temp_kelvin(self) -> int | None:
+        return self._color_temp_kelvin
